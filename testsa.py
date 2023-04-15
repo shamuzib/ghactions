@@ -92,4 +92,43 @@ for section in config.sections():
     if 'RDS_ACUUtilization_Per_DB' in section:
         db_instance_identifier = section.split('_')[-1]
         metric_name = config.get(section, 'metric_name')
-        namespace = config.get(section, 'namespace
+        namespace = config.get(section, 'namespace')
+        thresholds = list(map(int, config.get(section, 'thresholds').split(',')))
+        dimensions = [
+            {
+                'Name': 'DBInstanceIdentifier',
+                'Value': db_instance_identifier
+            }
+        ]
+        period = int(config.get(section, 'period'))
+        alarm_name = f'RDS-{metric_name}-{db_instance_identifier}'
+        alarm_description = f'Alarm for {metric_name} on RDS instance {db_instance_identifier}'
+        comparison_operator = 'GreaterThanThreshold'
+        create_alarm(metric_name, namespace, dimensions, alarm_name, alarm_description, comparison_operator, thresholds, period)
+
+# Create alarms for RDS AuroraReplicaLag per instance metric
+for section in config.sections():
+    if 'RDS_AuroraReplicaLag_Per_Instance' in section:
+        db_instance_identifier = section.split('_')[-1]
+        metric_name = config.get(section, 'metric_name')
+        namespace = config.get(section, 'namespace')
+        thresholds = list(map(int, config.get(section, 'thresholds').split(',')))
+        dimensions = [
+            {
+                'Name': 'DBInstanceIdentifier',
+                'Value': db_instance_identifier
+            },
+            {
+                'Name': 'EngineName',
+                'Value': 'aurora'
+            },
+            {
+                'Name': 'Role',
+                'Value': 'READER'
+            }
+        ]
+        period = int(config.get(section, 'period'))
+        alarm_name = f'RDS-{metric_name}-{db_instance_identifier}-READER'
+        alarm_description = f'Alarm for {metric_name} on Aurora reader node {db_instance_identifier}'
+        comparison_operator = 'GreaterThanThreshold'
+        create_alarm(metric_name, namespace, dimensions, alarm_name, alarm_description, comparison_operator, thresholds, period
