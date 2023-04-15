@@ -1,134 +1,95 @@
-[RDS_ACUUtilization_Per_DB]
-namespace = AWS/RDS
-metric_name = ACUUtilization
-dimensions = DBInstanceIdentifier:{DBInstanceIdentifier}
+[RDS_ACUUtilization_per_DB]
 thresholds = 75,90
 period = 300
+dimension_DBInstanceIdentifier = db-instance-1
 
-[RDS_AuroraReplicaLag_Per_Instance]
-namespace = AWS/RDS
-metric_name = AuroraReplicaLag
-dimensions = DBInstanceIdentifier:{DBInstanceIdentifier}
+[RDS_AuroraReplicaLag_per_DB_on_reader_node]
 thresholds = 5000,25000
-period = 300
+period = 60
+dimension_DBInstanceIdentifier = db-instance-1
+dimension_EngineMode = provisioned
+dimension_ReadEndpoint = reader
 
-[RDS_CPUUtilization_Per_Instance]
-namespace = AWS/RDS
-metric_name = CPUUtilization
-dimensions = DBInstanceIdentifier:{DBInstanceIdentifier}
+[RDS_CPUUtilization_per_DB]
 thresholds = 75,90
 period = 300
+dimension_DBInstanceIdentifier = db-instance-1
 
-[RDS_ServerlessDBCapacity_Per_Cluster]
-namespace = AWS/RDS
-metric_name = ServerlessDBCapacity
-dimensions = DBClusterIdentifier:riskvire-prod-aurora-2
+[RDS_ServerlessDBCapacity_riskview-prod-aurora-2]
 thresholds = 75,90
 period = 300
+dimension_DBClusterIdentifier = riskview-prod-aurora-2
 
-[RDS_ACUUtilization_Per_Cluster]
-namespace = AWS/RDS
-metric_name = ACUUtilization
-dimensions = DBClusterIdentifier:riskvire-prod-aurora-2
+[RDS_ACUUtilization_riskvire-prod-aurora-2]
 thresholds = 75,90
 period = 300
+dimension_DBClusterIdentifier = riskview-prod-aurora-2
 
-[RDS_CPUUtilization_Per_Cluster]
-namespace = AWS/RDS
-metric_name = CPUUtilization
-dimensions = DBClusterIdentifier:riskvire-prod-aurora-2
+[RDS_CPUUtilization_riskvire-prod-aurora-2]
 thresholds = 75,90
 period = 300
+dimension_DBClusterIdentifier = riskview-prod-aurora-2
+
 
 
 
 import boto3
 import configparser
 
-# Read the configuration file
-config = configparser.ConfigParser()
-config.read('config.ini')
+def create_cloudwatch_alarms(config_file):
+    # Read the configuration file
+    config = configparser.ConfigParser()
+    config.read(config_file)
 
-# Set up the client for CloudWatch
-cloudwatch = boto3.client('cloudwatch')
+    # Create CloudWatch client
+    cloudwatch = boto3.client('cloudwatch')
 
-# Helper function to create an alarm
-def create_alarm(metric_name, namespace, dimensions, alarm_name, alarm_description, comparison_operator, thresholds, period):
-    response = cloudwatch.put_metric_alarm(
-        AlarmName=alarm_name,
-        AlarmDescription=alarm_description,
-        ActionsEnabled=True,
-        MetricName=metric_name,
-        Namespace=namespace,
-        Statistic='Average',
-        Dimensions=dimensions,
-        Period=period,
-        EvaluationPeriods=1,
-        Threshold=thresholds[0],
-        ComparisonOperator=comparison_operator,
-        AlarmActions=['arn:aws:sns:us-east-1:123456789012:my-topic-1']
-    )
-
-    # Create the second alarm for critical threshold
-    response = cloudwatch.put_metric_alarm(
-        AlarmName=alarm_name + '-Critical',
-        AlarmDescription=alarm_description + ' (critical)',
-        ActionsEnabled=True,
-        MetricName=metric_name,
-        Namespace=namespace,
-        Statistic='Average',
-        Dimensions=dimensions,
-        Period=period,
-        EvaluationPeriods=1,
-        Threshold=thresholds[1],
-        ComparisonOperator=comparison_operator,
-        AlarmActions=['arn:aws:sns:us-east-1:123456789012:my-topic-2']
-    )
-
-    return response
-
-# Create alarms for RDS ACUUtilization per DB metric
-for section in config.sections():
-    if 'RDS_ACUUtilization_Per_DB' in section:
-        db_instance_identifier = section.split('_')[-1]
-        metric_name = config.get(section, 'metric_name')
-        namespace = config.get(section, 'namespace')
-        thresholds = list(map(int, config.get(section, 'thresholds').split(',')))
-        dimensions = [
-            {
-                'Name': 'DBInstanceIdentifier',
-                'Value': db_instance_identifier
-            }
-        ]
+    # Loop through the alarms defined in the configuration file
+    for section in config.sections():
+        # Get the alarm properties from the configuration file
+        metric_name = section.split('_', 1)[1]
+        threshold_warning, threshold_critical = map(int, config.get(section, 'thresholds').split(','))
         period = int(config.get(section, 'period'))
-        alarm_name = f'RDS-{metric_name}-{db_instance_identifier}'
-        alarm_description = f'Alarm for {metric_name} on RDS instance {db_instance_identifier}'
-        comparison_operator = 'GreaterThanThreshold'
-        create_alarm(metric_name, namespace, dimensions, alarm_name, alarm_description, comparison_operator, thresholds, period)
+        dimensions = [{key: value} for key, value in config.items(section) if key.startswith('dimension_')]
 
-# Create alarms for RDS AuroraReplicaLag per instance metric
-for section in config.sections():
-    if 'RDS_AuroraReplicaLag_Per_Instance' in section:
-        db_instance_identifier = section.split('_')[-1]
-        metric_name = config.get(section, 'metric_name')
-        namespace = config.get(section, 'namespace')
-        thresholds = list(map(int, config.get(section, 'thresholds').split(',')))
-        dimensions = [
-            {
-                'Name': 'DBInstanceIdentifier',
-                'Value': db_instance_identifier
-            },
-            {
-                'Name': 'EngineName',
-                'Value': 'aurora'
-            },
-            {
-                'Name': 'Role',
-                'Value': 'READER'
-            }
-        ]
-        period = int(config.get(section, 'period'))
-        alarm_name = f'RDS-{metric_name}-{db_instance_identifier}-READER'
-        alarm_description = f'Alarm for {metric_name} on Aurora reader node {db_instance_identifier}'
-        comparison_operator = 'GreaterThanThreshold'
-        create_alarm(metric_name, namespace, dimensions, alarm_name, alarm_description, comparison_operator, thresholds, period
+        # Check if the alarm already exists
+        alarm_name = f"{metric_name} alarm"
+        response = cloudwatch.describe_alarms(AlarmNames=[alarm_name])
+        alarms = response['MetricAlarms']
+
+        if len(alarms) > 0:
+            print(f"Alarm '{alarm_name}' already exists. Skipping...")
+            continue
+
+        # Create the CloudWatch alarm
+        print(f"Creating alarm '{alarm_name}'...")
+        cloudwatch.put_metric_alarm(
+            AlarmName=alarm_name,
+            AlarmDescription=f"{metric_name} metric threshold exceeded",
+            ActionsEnabled=False,
+            MetricName=metric_name,
+            Namespace='AWS/RDS',
+            Statistic='Average',
+            Dimensions=dimensions,
+            Period=period,
+            EvaluationPeriods=1,
+            Threshold=threshold_warning,
+            ComparisonOperator='GreaterThanThreshold',
+            AlarmActions=[],
+            OKActions=[],
+            InsufficientDataActions=[]
+        )
+
+        # Create the critical threshold alarm
+        critical_alarm_name = f"{metric_name} critical alarm"
+        print(f"Creating alarm '{critical_alarm_name}'...")
+        cloudwatch.put_metric_alarm(
+            AlarmName=critical_alarm_name,
+            AlarmDescription=f"{metric_name} metric threshold exceeded",
+            ActionsEnabled=False,
+            MetricName=metric_name,
+            Namespace='AWS/RDS',
+            Statistic='Average',
+            Dimensions=dimensions,
+            Period=period,
+            EvaluationPeriods
