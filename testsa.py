@@ -32,39 +32,50 @@ dimension_DBClusterIdentifier = riskview-prod-aurora-2
 
 
 
-
 import boto3
-import configparser
+from configparser import ConfigParser
 
-def create_cloudwatch_alarms(config_file):
-    # Read the configuration file
-    config = configparser.ConfigParser()
-    config.read(config_file)
+# Function to create CloudWatch alarms based on configurations specified in config.ini file
+def create_cloudwatch_alarms():
+    # Read configuration from file
+    config = ConfigParser()
+    config.read('config.ini')
 
     # Create CloudWatch client
     cloudwatch = boto3.client('cloudwatch')
 
-    # Loop through the alarms defined in the configuration file
+    # Loop through all sections in the configuration file
     for section in config.sections():
-        # Get the alarm properties from the configuration file
-        metric_name = section.split('_', 1)[1]
-        threshold_warning, threshold_critical = map(int, config.get(section, 'thresholds').split(','))
-        period = int(config.get(section, 'period'))
-        dimensions = [{key: value} for key, value in config.items(section) if key.startswith('dimension_')]
+        # Extract configuration parameters
+        metric_name = section.split("_")[1]
+        cluster_name = section.split("_")[-1]
+        thresholds = config.get(section, "thresholds").split(",")
+        period = int(config.get(section, "period"))
+        db_instance_identifier = config.get(section, "dimension_DBInstanceIdentifier", fallback=None)
 
-        # Check if the alarm already exists
-        alarm_name = f"{metric_name} alarm"
-        response = cloudwatch.describe_alarms(AlarmNames=[alarm_name])
-        alarms = response['MetricAlarms']
-
-        if len(alarms) > 0:
-            print(f"Alarm '{alarm_name}' already exists. Skipping...")
+        # Check if specified alarm already exists
+        alarms = cloudwatch.describe_alarms(AlarmNamePrefix=f"{metric_name} {cluster_name}")
+        if len(alarms['MetricAlarms']) > 0:
+            print(f"Alarm '{metric_name} {cluster_name}' already exists. Skipping creation.")
             continue
 
-        # Create the CloudWatch alarm
-        print(f"Creating alarm '{alarm_name}'...")
+        # Set threshold values based on configuration
+        threshold_warning = float(thresholds[0])
+        threshold_critical = float(thresholds[1])
+
+        # Define dimensions for the alarm based on configuration
+        dimensions = []
+        if db_instance_identifier:
+            dimensions.append({
+                'Name': 'DBInstanceIdentifier',
+                'Value': db_instance_identifier
+            })
+
+        # Create the warning threshold alarm
+        warning_alarm_name = f"{metric_name} warning alarm"
+        print(f"Creating alarm '{warning_alarm_name}'...")
         cloudwatch.put_metric_alarm(
-            AlarmName=alarm_name,
+            AlarmName=warning_alarm_name,
             AlarmDescription=f"{metric_name} metric threshold exceeded",
             ActionsEnabled=False,
             MetricName=metric_name,
@@ -72,12 +83,10 @@ def create_cloudwatch_alarms(config_file):
             Statistic='Average',
             Dimensions=dimensions,
             Period=period,
-            EvaluationPeriods=1,
+            EvaluationPeriods=2,
             Threshold=threshold_warning,
             ComparisonOperator='GreaterThanThreshold',
-            AlarmActions=[],
-            OKActions=[],
-            InsufficientDataActions=[]
+            TreatMissingData='notBreaching'
         )
 
         # Create the critical threshold alarm
@@ -92,4 +101,8 @@ def create_cloudwatch_alarms(config_file):
             Statistic='Average',
             Dimensions=dimensions,
             Period=period,
-            EvaluationPeriods
+            EvaluationPeriods=3,
+            Threshold=threshold_critical,
+            ComparisonOperator='GreaterThanThreshold',
+            TreatMissingData='notBreaching'
+        )
